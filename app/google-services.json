@@ -1,0 +1,42 @@
+{
+  "project_info": {
+    "project_number": "953868298338",
+    "firebase_url": "https://two-step-authentication-152520.firebaseio.com",
+    "project_id": "two-step-authentication-152520",
+    "storage_bucket": "two-step-authentication-152520.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:953868298338:android:cb026b9759568484",
+        "android_client_info": {
+          "package_name": "com.electrosheep.twostepauthentication"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "953868298338-ppufejjrtcikmhe3t6vqvstd26rqh8m6.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDnK_ky49Ei7oDeedYj_Zwomq9uo3auRIg"
+        }
+      ],
+      "services": {
+        "analytics_service": {
+          "status": 1
+        },
+        "appinvite_service": {
+          "status": 1,
+          "other_platform_oauth_client": []
+        },
+        "ads_service": {
+          "status": 2
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

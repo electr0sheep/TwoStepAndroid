@@ -36,7 +36,11 @@
             </intent-filter>
         </service>
 
-        <activity android:name=".Activities.MainActivity"></activity>
+        <activity android:name=".Activities.MainActivity">
+            <intent-filter>
+                <action android:name="com.electrosheep.twostepauthentication.AUTHENTICATE" />
+            </intent-filter>
+        </activity>
     </application>
 
 </manifest>

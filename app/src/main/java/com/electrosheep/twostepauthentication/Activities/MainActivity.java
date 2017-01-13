@@ -1,9 +1,13 @@
 package com.electrosheep.twostepauthentication.Activities;
 
+import android.accounts.AccountManager;
 import android.app.Activity;
 import android.app.KeyguardManager;
+import android.content.DialogInterface;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.hardware.fingerprint.FingerprintManager;
+import android.os.AsyncTask;
 import android.os.Build;
 import android.os.Bundle;
 import android.preference.PreferenceManager;
@@ -11,6 +15,7 @@ import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyPermanentlyInvalidatedException;
 import android.security.keystore.KeyProperties;
 import android.support.annotation.Nullable;
+import android.support.v7.app.AlertDialog;
 import android.util.Base64;
 import android.util.Log;
 import android.view.View;
@@ -19,6 +24,12 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import com.electrosheep.twostepauthentication.FingerprintAuthenticationDialogFragment;
+import com.electrosheep.twostepauthentication.Models.AuthenticationResponse;
+import com.electrosheep.twostepauthentication.Models.LoginResponse;
+import com.electrosheep.twostepauthentication.Parsers.AuthenticationResponseJSONParser;
+import com.electrosheep.twostepauthentication.Parsers.HttpManager;
+import com.electrosheep.twostepauthentication.Parsers.LoginResponseJSONParser;
+import com.electrosheep.twostepauthentication.Parsers.RequestPackage;
 import com.electrosheep.twostepauthentication.R;
 
 import java.io.IOException;
@@ -38,6 +49,8 @@ import javax.crypto.KeyGenerator;
 import javax.crypto.NoSuchPaddingException;
 import javax.crypto.SecretKey;
 
+import static com.electrosheep.twostepauthentication.Activities.LoginActivity.SERVER_URL;
+
 /**
  * Main entry point for the sample, showing a backpack and "Purchase" button.
  */
@@ -53,6 +66,8 @@ public class MainActivity extends Activity {
     private KeyStore mKeyStore;
     private KeyGenerator mKeyGenerator;
     private SharedPreferences mSharedPreferences;
+    private String username;
+    private String password;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -86,22 +101,6 @@ public class MainActivity extends Activity {
 
         KeyguardManager keyguardManager = getSystemService(KeyguardManager.class);
         FingerprintManager fingerprintManager = getSystemService(FingerprintManager.class);
-        Button purchaseButton = (Button) findViewById(R.id.purchase_button);
-        Button purchaseButtonNotInvalidated = (Button) findViewById(
-                R.id.purchase_button_not_invalidated);
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            purchaseButtonNotInvalidated.setEnabled(true);
-            purchaseButtonNotInvalidated.setOnClickListener(
-                    new PurchaseButtonClickListener(cipherNotInvalidated,
-                            KEY_NAME_NOT_INVALIDATED));
-        } else {
-            // Hide the purchase button which uses a non-invalidated key
-            // if the app doesn't work on Android N preview
-            purchaseButtonNotInvalidated.setVisibility(View.GONE);
-            findViewById(R.id.purchase_button_not_invalidated_description)
-                    .setVisibility(View.GONE);
-        }
 
         if (!keyguardManager.isKeyguardSecure()) {
             // Show a message that the user hasn't set up a fingerprint or lock screen.
@@ -109,8 +108,6 @@ public class MainActivity extends Activity {
                     "Secure lock screen hasn't set up.\n"
                             + "Go to 'Settings -> Security -> Fingerprint' to set up a fingerprint",
                     Toast.LENGTH_LONG).show();
-            purchaseButton.setEnabled(false);
-            purchaseButtonNotInvalidated.setEnabled(false);
             return;
         }
 
@@ -119,7 +116,6 @@ public class MainActivity extends Activity {
         // The line below prevents the false positive inspection from Android Studio
         // noinspection ResourceType
         if (!fingerprintManager.hasEnrolledFingerprints()) {
-            purchaseButton.setEnabled(false);
             // This happens when no fingerprints are registered.
             Toast.makeText(this,
                     "Go to 'Settings -> Security -> Fingerprint' and register at least one fingerprint",
@@ -128,9 +124,49 @@ public class MainActivity extends Activity {
         }
         createKey(DEFAULT_KEY_NAME, true);
         createKey(KEY_NAME_NOT_INVALIDATED, false);
-        purchaseButton.setEnabled(true);
-        purchaseButton.setOnClickListener(
-                new PurchaseButtonClickListener(defaultCipher, DEFAULT_KEY_NAME));
+
+        // See if the user is logged in
+        username = mSharedPreferences.getString("username", "NULL");
+        password = mSharedPreferences.getString("password", "NULL");
+        if (username.equals("NULL") || password.equals("NULL")){
+            // if not, launch login activity
+            Intent intent = new Intent(this, LoginActivity.class);
+            startActivity(intent);
+        }
+        // TODO: Make sure the credentials are valid
+
+        // Show fingerprint dialog
+        if (initCipher(defaultCipher, DEFAULT_KEY_NAME)) {
+
+            // Show the fingerprint dialog. The user has the option to use the fingerprint with
+            // crypto, or you can fall back to using a server-side verified password.
+            FingerprintAuthenticationDialogFragment fragment
+                    = new FingerprintAuthenticationDialogFragment();
+            fragment.setCryptoObject(new FingerprintManager.CryptoObject(defaultCipher));
+            fragment.setCancelable(false);
+            boolean useFingerprintPreference = mSharedPreferences
+                    .getBoolean(getString(R.string.use_fingerprint_to_authenticate_key),
+                            true);
+            if (useFingerprintPreference) {
+                fragment.setStage(
+                        FingerprintAuthenticationDialogFragment.Stage.FINGERPRINT);
+            } else {
+                fragment.setStage(
+                        FingerprintAuthenticationDialogFragment.Stage.PASSWORD);
+            }
+            fragment.show(getFragmentManager(), DIALOG_FRAGMENT_TAG);
+        } else {
+            // This happens if the lock screen has been disabled or or a fingerprint got
+            // enrolled. Thus show the dialog to authenticate with their password first
+            // and ask the user if they want to authenticate with fingerprints in the
+            // future
+            FingerprintAuthenticationDialogFragment fragment
+                    = new FingerprintAuthenticationDialogFragment();
+            fragment.setCryptoObject(new FingerprintManager.CryptoObject(defaultCipher));
+            fragment.setStage(
+                    FingerprintAuthenticationDialogFragment.Stage.NEW_FINGERPRINT_ENROLLED);
+            fragment.show(getFragmentManager(), DIALOG_FRAGMENT_TAG);
+        }
     }
 
     /**
@@ -169,19 +205,9 @@ public class MainActivity extends Activity {
             // then show the confirmation message.
             assert cryptoObject != null;
             tryEncrypt(cryptoObject.getCipher());
+            sendResponseToServer(true);
         } else {
             // Authentication happened with backup password. Just show the confirmation message.
-            showConfirmation(null);
-        }
-    }
-
-    // Show confirmation, if fingerprint was used show crypto information.
-    private void showConfirmation(byte[] encrypted) {
-        findViewById(R.id.confirmation_message).setVisibility(View.VISIBLE);
-        if (encrypted != null) {
-            TextView v = (TextView) findViewById(R.id.encrypted_message);
-            v.setVisibility(View.VISIBLE);
-            v.setText(Base64.encodeToString(encrypted, 0 /* flags */));
         }
     }
 
@@ -192,7 +218,7 @@ public class MainActivity extends Activity {
     private void tryEncrypt(Cipher cipher) {
         try {
             byte[] encrypted = cipher.doFinal(SECRET_MESSAGE.getBytes());
-            showConfirmation(encrypted);
+            sendResponseToServer(true);
         } catch (BadPaddingException | IllegalBlockSizeException e) {
             Toast.makeText(this, "Failed to encrypt the data with the generated key. "
                     + "Retry the purchase", Toast.LENGTH_LONG).show();
@@ -248,53 +274,62 @@ public class MainActivity extends Activity {
         }
     }
 
-    private class PurchaseButtonClickListener implements View.OnClickListener {
+    void sendResponseToServer(boolean result){
+        String fcm_token = mSharedPreferences.getString("fcm_token", "NULL");
+        ServerAuthTask mServerAuthTask = null;
+        mServerAuthTask = new ServerAuthTask(username, password, fcm_token);
+        mServerAuthTask.execute(SERVER_URL);
+    }
 
-        Cipher mCipher;
-        String mKeyName;
+    /**
+     * Represents an asynchronous login/registration task used to authenticate
+     * the user.
+     */
+    public class ServerAuthTask extends AsyncTask<String, Void, String> {
 
-        PurchaseButtonClickListener(Cipher cipher, String keyName) {
-            mCipher = cipher;
-            mKeyName = keyName;
+        private final String mUsername;
+        private final String mPassword;
+        private final String mFcmToken;
+
+        ServerAuthTask(String username, String password, String fcm_token) {
+            mUsername = username;
+            mPassword = password;
+            mFcmToken = fcm_token;
         }
 
         @Override
-        public void onClick(View view) {
-            findViewById(R.id.confirmation_message).setVisibility(View.GONE);
-            findViewById(R.id.encrypted_message).setVisibility(View.GONE);
+        protected String doInBackground(String... params) {
+            // encode the request package
+            RequestPackage p = new RequestPackage();
+            p.setMethod("POST");
+            p.setParam("username", mUsername);
+            p.setParam("password", mPassword);
+            p.setParam("fcm_token", mFcmToken);
+            p.setUri(params[0] + "/authenticate.php");
 
-            // Set up the crypto object for later. The object will be authenticated by use
-            // of the fingerprint.
-            if (initCipher(mCipher, mKeyName)) {
+            return HttpManager.getData(p);
+        }
 
-                // Show the fingerprint dialog. The user has the option to use the fingerprint with
-                // crypto, or you can fall back to using a server-side verified password.
-                FingerprintAuthenticationDialogFragment fragment
-                        = new FingerprintAuthenticationDialogFragment();
-                fragment.setCryptoObject(new FingerprintManager.CryptoObject(mCipher));
-                boolean useFingerprintPreference = mSharedPreferences
-                        .getBoolean(getString(R.string.use_fingerprint_to_authenticate_key),
-                                true);
-                if (useFingerprintPreference) {
-                    fragment.setStage(
-                            FingerprintAuthenticationDialogFragment.Stage.FINGERPRINT);
-                } else {
-                    fragment.setStage(
-                            FingerprintAuthenticationDialogFragment.Stage.PASSWORD);
-                }
-                fragment.show(getFragmentManager(), DIALOG_FRAGMENT_TAG);
-            } else {
-                // This happens if the lock screen has been disabled or or a fingerprint got
-                // enrolled. Thus show the dialog to authenticate with their password first
-                // and ask the user if they want to authenticate with fingerprints in the
-                // future
-                FingerprintAuthenticationDialogFragment fragment
-                        = new FingerprintAuthenticationDialogFragment();
-                fragment.setCryptoObject(new FingerprintManager.CryptoObject(mCipher));
-                fragment.setStage(
-                        FingerprintAuthenticationDialogFragment.Stage.NEW_FINGERPRINT_ENROLLED);
-                fragment.show(getFragmentManager(), DIALOG_FRAGMENT_TAG);
+        @Override
+        protected void onPostExecute(final String content) {
+
+            if (content == null || content == ""){
+                Toast.makeText(MainActivity.this, "There was no server response", Toast.LENGTH_SHORT).show();
             }
+
+            // parse the string response
+            AuthenticationResponse response = AuthenticationResponseJSONParser.parseFeed(content);
+
+            if (response == null){
+                Toast.makeText(MainActivity.this, "The following unparseable string was sent by the server: " + content, Toast.LENGTH_LONG).show();
+                return;
+            }
+
+            if (response.getResult() == false){
+                Toast.makeText(MainActivity.this, "Authentication failed!", Toast.LENGTH_SHORT).show();
+            }
+
+            MainActivity.this.finish();
         }
     }
 }

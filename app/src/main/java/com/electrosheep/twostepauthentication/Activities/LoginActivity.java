@@ -1,8 +1,11 @@
 package com.electrosheep.twostepauthentication.Activities;
 
+import android.accounts.Account;
+import android.accounts.AccountManager;
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
 import android.annotation.TargetApi;
+import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -52,7 +55,7 @@ public class LoginActivity extends AppCompatActivity implements LoaderCallbacks<
 
     public static final String SERVER_URL =
             "https://two-step-authentication.herokuapp.com/php";
-    public SharedPreferences sharedPref;
+    private SharedPreferences sharedPref;
 
 
     /**
@@ -400,5 +403,12 @@ public class LoginActivity extends AppCompatActivity implements LoaderCallbacks<
 //        intent.putExtra("username", username);
 //        intent.putExtra("password", password);
 //        startActivity(intent);
+
+        // Store credentials
+        SharedPreferences.Editor editor = sharedPref.edit();
+        editor.putString("username", username);
+        editor.putString("password", password);
+        editor.apply();
+        finish();
     }
 }

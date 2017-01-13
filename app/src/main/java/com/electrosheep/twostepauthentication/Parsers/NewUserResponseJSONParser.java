@@ -20,9 +20,7 @@ public class NewUserResponseJSONParser {
             return response;
         }
         try {
-            JSONArray ar = new JSONArray(content);
-
-            JSONObject obj = ar.getJSONObject(0);
+            JSONObject obj = new JSONObject(content);
 
             response.setMessage(obj.getString("message"));
             response.setResult(obj.getBoolean("result"));
